@@ -11,7 +11,7 @@ from scipy.signal import butter, periodogram, resample_poly, sosfiltfilt
 
 
 VIDEO_PATH: Optional[str] = None
-FIXED_RADIUS_MM: float = 2.9
+FIXED_RADIUS_MM: float = 3.08
 RING_THICKNESS_MM: float = 0.6
 FILTER_BAND_HZ: Tuple[float, float] = (4.0, 6.0)
 FILTER_ORDER: int = 4
@@ -648,13 +648,13 @@ def main(show_plots: bool = True):
     init_center, _ = select_circle_roi(first)
     last_center = np.array([float(init_center[0]), float(init_center[1])], dtype=np.float32)
 
-    # 3) 固定半径(px) + 圆环厚度(px)
+    # 3) 固定内半径(px) + 圆环厚度(px)
     fixed_radius_px = FIXED_RADIUS_MM / scale
     ring_thickness_px = max(RING_THICKNESS_MM / scale, 0.0)
-    ring_inner_px = max(fixed_radius_px - ring_thickness_px, 1.0)
-    ring_outer_px = fixed_radius_px
+    ring_inner_px = max(fixed_radius_px, 1.0)
+    ring_outer_px = ring_inner_px + ring_thickness_px
     print(
-        f"[Radius] outer={FIXED_RADIUS_MM:.3f}mm -> {fixed_radius_px:.3f}px, "
+        f"[Radius] inner={FIXED_RADIUS_MM:.3f}mm -> {fixed_radius_px:.3f}px, "
         f"ring_thickness={RING_THICKNESS_MM:.3f}mm -> {ring_thickness_px:.3f}px"
     )
 
@@ -838,7 +838,7 @@ def main(show_plots: bool = True):
     print(f"Scale (mm/px): {scale:.6f}")
     print(
         "Ring outer/inner radius: "
-        f"{FIXED_RADIUS_MM:.3f}/{(FIXED_RADIUS_MM - RING_THICKNESS_MM):.3f} mm "
+        f"{(FIXED_RADIUS_MM + RING_THICKNESS_MM):.3f}/{FIXED_RADIUS_MM:.3f} mm "
         f"({ring_outer_px:.3f}/{ring_inner_px:.3f} px)"
     )
     print(f"Max radial deviation (filtered): {max_dev:.4f} mm")
