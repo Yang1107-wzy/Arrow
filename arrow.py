@@ -555,15 +555,15 @@ def frequency_analysis(
     signal: np.ndarray, fs: float, title: str = "Frequency Spectrum", show: bool = True
 ):
     f, Pxx = periodogram(signal, fs)
+    fig = plt.figure(figsize=(8, 4))
+    plt.semilogy(f, Pxx)
+    plt.title(title)
+    plt.xlabel("Frequency [Hz]")
+    plt.ylabel("Power Spectrum")
+    plt.xlim(0, min(100, fs / 2))
+    plt.grid(True)
+    plt.tight_layout()
     if show:
-        plt.figure(figsize=(8, 4))
-        plt.semilogy(f, Pxx)
-        plt.title(title)
-        plt.xlabel("Frequency [Hz]")
-        plt.ylabel("Power Spectrum")
-        plt.xlim(0, min(100, fs / 2))
-        plt.grid(True)
-        plt.tight_layout()
         plt.show()
 
     mask = (f >= 1) & (f <= 30)
@@ -573,7 +573,16 @@ def frequency_analysis(
     else:
         dom_freq = None
         dom_amp = None
-    return dom_freq, dom_amp
+    return dom_freq, dom_amp, fig
+
+
+def build_plot_path(video_path: str, suffix: str) -> str:
+    base = os.path.splitext(os.path.basename(video_path))[0]
+    return os.path.join(os.path.dirname(video_path), f"{base}_{suffix}.png")
+
+
+def save_figure(fig: plt.Figure, path: str) -> None:
+    fig.savefig(path, dpi=150, bbox_inches="tight")
 
 
 # max pairwise distance
@@ -826,7 +835,7 @@ def main(show_plots: bool = True):
     std_dev = float(np.std(np.abs(filtered_radial)))
     max_dev = float(np.max(np.abs(filtered_radial)))
 
-    dom_freq, dom_amp = frequency_analysis(
+    dom_freq, dom_amp, raw_freq_fig = frequency_analysis(
         radial_offsets, fps, "Radial Offset Frequency Spectrum (RAW)", show=show_plots
     )
 
@@ -851,115 +860,120 @@ def main(show_plots: bool = True):
     else:
         print("Dominant freq: None")
 
+    units = "mm"
+    time_axis = np.arange(len(radial_offsets)) / fps
+
+    offsets_fig = plt.figure(figsize=(15, 12))
+    plt.suptitle(f"Offsets: Raw vs Filtered ({units})", fontsize=16)
+
+    # 径向偏移（滤波前后）
+    plt.subplot(3, 2, 1)
+    plt.plot(time_axis, radial_offsets, label="Radial Raw")
+    plt.title("Radial Offset (Raw)")
+    plt.xlabel("Time (s)")
+    plt.ylabel(f"Radial Offset ({units})")
+    plt.grid(True)
+
+    plt.subplot(3, 2, 2)
+    plt.plot(time_axis, filtered_radial, label="Radial Filtered", color="orange")
+    plt.title(f"Radial Offset (Filtered {lowcut}-{highcut} Hz, BP(r))")
+    plt.xlabel("Time (s)")
+    plt.ylabel(f"Radial Offset ({units})")
+    plt.grid(True)
+
+    # X偏移（滤波前后）
+    plt.subplot(3, 2, 3)
+    plt.plot(time_axis, x_offsets, label="X Raw")
+    plt.title("X Offset (Raw)")
+    plt.xlabel("Time (s)")
+    plt.ylabel(f"X Offset ({units})")
+    plt.grid(True)
+
+    plt.subplot(3, 2, 4)
+    plt.plot(time_axis, filtered_x, label="X Filtered", color="orange")
+    plt.title(f"X Offset (Filtered {lowcut}-{highcut} Hz)")
+    plt.xlabel("Time (s)")
+    plt.ylabel(f"X Offset ({units})")
+    plt.grid(True)
+
+    # Y偏移（滤波前后）
+    plt.subplot(3, 2, 5)
+    plt.plot(time_axis, y_offsets, label="Y Raw")
+    plt.title("Y Offset (Raw)")
+    plt.xlabel("Time (s)")
+    plt.ylabel(f"Y Offset ({units})")
+    plt.grid(True)
+
+    plt.subplot(3, 2, 6)
+    plt.plot(time_axis, filtered_y, label="Y Filtered", color="orange")
+    plt.title(f"Y Offset (Filtered {lowcut}-{highcut} Hz)")
+    plt.xlabel("Time (s)")
+    plt.ylabel(f"Y Offset ({units})")
+    plt.grid(True)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     if show_plots:
-        units = "mm"
-        time_axis = np.arange(len(radial_offsets)) / fps
-
-        plt.figure(figsize=(15, 12))
-        plt.suptitle(f"Offsets: Raw vs Filtered ({units})", fontsize=16)
-
-        # 径向偏移（滤波前后）
-        plt.subplot(3, 2, 1)
-        plt.plot(time_axis, radial_offsets, label="Radial Raw")
-        plt.title("Radial Offset (Raw)")
-        plt.xlabel("Time (s)")
-        plt.ylabel(f"Radial Offset ({units})")
-        plt.grid(True)
-
-        plt.subplot(3, 2, 2)
-        plt.plot(time_axis, filtered_radial, label="Radial Filtered", color="orange")
-        plt.title(f"Radial Offset (Filtered {lowcut}-{highcut} Hz, BP(r))")
-        plt.xlabel("Time (s)")
-        plt.ylabel(f"Radial Offset ({units})")
-        plt.grid(True)
-
-        # X偏移（滤波前后）
-        plt.subplot(3, 2, 3)
-        plt.plot(time_axis, x_offsets, label="X Raw")
-        plt.title("X Offset (Raw)")
-        plt.xlabel("Time (s)")
-        plt.ylabel(f"X Offset ({units})")
-        plt.grid(True)
-
-        plt.subplot(3, 2, 4)
-        plt.plot(time_axis, filtered_x, label="X Filtered", color="orange")
-        plt.title(f"X Offset (Filtered {lowcut}-{highcut} Hz)")
-        plt.xlabel("Time (s)")
-        plt.ylabel(f"X Offset ({units})")
-        plt.grid(True)
-
-        # Y偏移（滤波前后）
-        plt.subplot(3, 2, 5)
-        plt.plot(time_axis, y_offsets, label="Y Raw")
-        plt.title("Y Offset (Raw)")
-        plt.xlabel("Time (s)")
-        plt.ylabel(f"Y Offset ({units})")
-        plt.grid(True)
-
-        plt.subplot(3, 2, 6)
-        plt.plot(time_axis, filtered_y, label="Y Filtered", color="orange")
-        plt.title(f"Y Offset (Filtered {lowcut}-{highcut} Hz)")
-        plt.xlabel("Time (s)")
-        plt.ylabel(f"Y Offset ({units})")
-        plt.grid(True)
-
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.show()
 
-        # 频率谱图
-        fig, axs = plt.subplots(3, 2, figsize=(14, 10))
-        fig.suptitle(f"Frequency Spectra: Raw vs Filtered ({units})", fontsize=16)
+    # 频率谱图
+    spectra_fig, axs = plt.subplots(3, 2, figsize=(14, 10))
+    spectra_fig.suptitle(f"Frequency Spectra: Raw vs Filtered ({units})", fontsize=16)
 
-        # 径向
-        f_raw, Pxx_raw = periodogram(radial_offsets, fps)
-        f_filt, Pxx_filt = periodogram(filtered_radial, fps)
-        axs[0, 0].semilogy(f_raw, Pxx_raw)
-        axs[0, 0].set_title("Radial Raw Spectrum")
-        axs[0, 0].set_xlabel("Frequency (Hz)")
-        axs[0, 0].set_ylabel("Power")
-        axs[0, 0].set_xlim(0, min(100, fps / 2))
-        axs[0, 0].grid(True)
-        axs[0, 1].semilogy(f_filt, Pxx_filt)
-        axs[0, 1].set_title("Radial Filtered Spectrum")
-        axs[0, 1].set_xlabel("Frequency (Hz)")
-        axs[0, 1].set_ylabel("Power")
-        axs[0, 1].set_xlim(0, min(100, fps / 2))
-        axs[0, 1].grid(True)
+    # 径向
+    f_raw, Pxx_raw = periodogram(radial_offsets, fps)
+    f_filt, Pxx_filt = periodogram(filtered_radial, fps)
+    axs[0, 0].semilogy(f_raw, Pxx_raw)
+    axs[0, 0].set_title("Radial Raw Spectrum")
+    axs[0, 0].set_xlabel("Frequency (Hz)")
+    axs[0, 0].set_ylabel("Power")
+    axs[0, 0].set_xlim(0, min(100, fps / 2))
+    axs[0, 0].grid(True)
+    axs[0, 1].semilogy(f_filt, Pxx_filt)
+    axs[0, 1].set_title("Radial Filtered Spectrum")
+    axs[0, 1].set_xlabel("Frequency (Hz)")
+    axs[0, 1].set_ylabel("Power")
+    axs[0, 1].set_xlim(0, min(100, fps / 2))
+    axs[0, 1].grid(True)
 
-        # X方向
-        fx_raw, Px_raw = periodogram(x_offsets, fps)
-        fx_filt, Px_filt = periodogram(filtered_x, fps)
-        axs[1, 0].semilogy(fx_raw, Px_raw)
-        axs[1, 0].set_title("X Raw Spectrum")
-        axs[1, 0].set_xlabel("Frequency (Hz)")
-        axs[1, 0].set_ylabel("Power")
-        axs[1, 0].set_xlim(0, min(100, fps / 2))
-        axs[1, 0].grid(True)
-        axs[1, 1].semilogy(fx_filt, Px_filt)
-        axs[1, 1].set_title("X Filtered Spectrum")
-        axs[1, 1].set_xlabel("Frequency (Hz)")
-        axs[1, 1].set_ylabel("Power")
-        axs[1, 1].set_xlim(0, min(100, fps / 2))
-        axs[1, 1].grid(True)
+    # X方向
+    fx_raw, Px_raw = periodogram(x_offsets, fps)
+    fx_filt, Px_filt = periodogram(filtered_x, fps)
+    axs[1, 0].semilogy(fx_raw, Px_raw)
+    axs[1, 0].set_title("X Raw Spectrum")
+    axs[1, 0].set_xlabel("Frequency (Hz)")
+    axs[1, 0].set_ylabel("Power")
+    axs[1, 0].set_xlim(0, min(100, fps / 2))
+    axs[1, 0].grid(True)
+    axs[1, 1].semilogy(fx_filt, Px_filt)
+    axs[1, 1].set_title("X Filtered Spectrum")
+    axs[1, 1].set_xlabel("Frequency (Hz)")
+    axs[1, 1].set_ylabel("Power")
+    axs[1, 1].set_xlim(0, min(100, fps / 2))
+    axs[1, 1].grid(True)
 
-        # Y方向
-        fy_raw, Py_raw = periodogram(y_offsets, fps)
-        fy_filt, Py_filt = periodogram(filtered_y, fps)
-        axs[2, 0].semilogy(fy_raw, Py_raw)
-        axs[2, 0].set_title("Y Raw Spectrum")
-        axs[2, 0].set_xlabel("Frequency (Hz)")
-        axs[2, 0].set_ylabel("Power")
-        axs[2, 0].set_xlim(0, min(100, fps / 2))
-        axs[2, 0].grid(True)
-        axs[2, 1].semilogy(fy_filt, Py_filt)
-        axs[2, 1].set_title("Y Filtered Spectrum")
-        axs[2, 1].set_xlabel("Frequency (Hz)")
-        axs[2, 1].set_ylabel("Power")
-        axs[2, 1].set_xlim(0, min(100, fps / 2))
-        axs[2, 1].grid(True)
+    # Y方向
+    fy_raw, Py_raw = periodogram(y_offsets, fps)
+    fy_filt, Py_filt = periodogram(filtered_y, fps)
+    axs[2, 0].semilogy(fy_raw, Py_raw)
+    axs[2, 0].set_title("Y Raw Spectrum")
+    axs[2, 0].set_xlabel("Frequency (Hz)")
+    axs[2, 0].set_ylabel("Power")
+    axs[2, 0].set_xlim(0, min(100, fps / 2))
+    axs[2, 0].grid(True)
+    axs[2, 1].semilogy(fy_filt, Py_filt)
+    axs[2, 1].set_title("Y Filtered Spectrum")
+    axs[2, 1].set_xlabel("Frequency (Hz)")
+    axs[2, 1].set_ylabel("Power")
+    axs[2, 1].set_xlim(0, min(100, fps / 2))
+    axs[2, 1].grid(True)
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    if show_plots:
         plt.show()
+
+    save_figure(offsets_fig, build_plot_path(video_path, "plot1_offsets"))
+    save_figure(raw_freq_fig, build_plot_path(video_path, "plot2_raw_spectrum"))
+    save_figure(spectra_fig, build_plot_path(video_path, "plot3_spectra"))
     return {
         "video": video_path,
         "output_video": out_path,
