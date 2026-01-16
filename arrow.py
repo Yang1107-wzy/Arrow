@@ -11,7 +11,7 @@ from scipy.signal import butter, periodogram, resample_poly, sosfiltfilt
 
 
 VIDEO_PATH: Optional[str] = None
-FIXED_RADIUS_MM: float = 3.08
+FIXED_RADIUS_MM: float = 2.9
 RING_THICKNESS_MM: float = 0.6
 FILTER_BAND_HZ: Tuple[float, float] = (4.0, 6.0)
 FILTER_ORDER: int = 4
@@ -20,6 +20,11 @@ TARGET_FS_HZ: float = 200.0
 CANNY_LOW: int = 30
 CANNY_HIGH: int = 100
 VOTE_THRESHOLD: int = 15
+VOTE_STEP_PX: float = 0.1
+VOTE_RADIUS_TOL_PX: float = 1.0
+GRADIENT_WEIGHT_MIN_DOT: float = 0.0
+GAUSSIAN_BLUR_KERNEL: Tuple[int, int] = (15, 15)
+GAUSSIAN_BLUR_SIGMA: float = 3.0
 
 try:
     import tkinter as tk
@@ -329,12 +334,15 @@ def solve_center_voting_sse_fixed_radius(
     ring_outer_px: Optional[float] = None,
     vote_threshold: int = 15,
     step_limit: int = 250,
+    vote_step_px: float = 0.1,
+    vote_radius_tol_px: float = 1.0,
+    gradient_weight_min_dot: float = 0.0,
     max_edge_points: int = 8000,
 ) -> Optional[Dict[str, object]]:
     """
     1) 用边缘点梯度方向对 ROI 内候选圆心投票
     2) 取 vote > vote_threshold 的像素点作为候选集合
-    3) 在候选集合里，用 SSE(c)=Σ(||p-c||-r)^2 选最小者作为圆心
+    3) 在候选集合里，用 SSE(c)=Σ(w_i*(||p-c||-r)^2) 选最小者作为圆心
     """
     h, w = edges.shape
     x_min, y_min, x_max, y_max = roi_box
@@ -361,7 +369,8 @@ def solve_center_voting_sse_fixed_radius(
         ys = ys[idx]
 
     gx, gy = sobel_grad(gray_for_grad)
-    vote_map = np.zeros((h, w), dtype=np.int32)
+    vote_scale = max(int(round(1.0 / max(vote_step_px, 1e-6))), 1)
+    vote_map: Dict[Tuple[int, int], int] = {}
 
     for x, y in zip(xs, ys):
         gxi = float(gx[y, x])
@@ -371,26 +380,38 @@ def solve_center_voting_sse_fixed_radius(
             continue
         ux, uy = gxi / norm, gyi / norm
 
+        vote_start = max(fixed_radius_px - vote_radius_tol_px, 0.0)
+        vote_end = fixed_radius_px + vote_radius_tol_px
         for direction in (+1.0, -1.0):
-            cx_f, cy_f = float(x), float(y)
+            dist = vote_start
             steps = 0
-            while True:
-                cx_f += direction * ux
-                cy_f += direction * uy
-                cx = int(round(cx_f))
-                cy = int(round(cy_f))
-                if cx < x_min or cx >= x_max or cy < y_min or cy >= y_max:
-                    break
-                vote_map[cy, cx] += 1
+            while dist <= vote_end and steps < step_limit:
+                cx_f = float(x) + direction * ux * dist
+                cy_f = float(y) + direction * uy * dist
+                if cx_f < x_min or cx_f >= x_max or cy_f < y_min or cy_f >= y_max:
+                    dist += vote_step_px
+                    steps += 1
+                    continue
+                cx_key = int(round(cx_f * vote_scale))
+                cy_key = int(round(cy_f * vote_scale))
+                vote_map[(cy_key, cx_key)] = vote_map.get((cy_key, cx_key), 0) + 1
+                dist += vote_step_px
                 steps += 1
-                if steps >= step_limit:
-                    break
 
-    cand = np.argwhere(vote_map > vote_threshold)  # [[cy,cx],...]
-    if cand.size == 0:
+    cand = [
+        (cy_key, cx_key)
+        for (cy_key, cx_key), votes in vote_map.items()
+        if votes > vote_threshold
+    ]
+    if not cand:
         return None
 
     pts = np.column_stack([xs.astype(np.float32), ys.astype(np.float32)])
+    grad = np.column_stack([gx[ys, xs].astype(np.float32), gy[ys, xs].astype(np.float32)])
+    grad_norm = np.linalg.norm(grad, axis=1)
+    grad_unit = np.zeros_like(grad)
+    valid_grad = grad_norm > 1e-9
+    grad_unit[valid_grad] = grad[valid_grad] / grad_norm[valid_grad, None]
     r = float(fixed_radius_px)
     ring_inner = float(ring_inner_px) if ring_inner_px is not None else None
     ring_outer = float(ring_outer_px) if ring_outer_px is not None else None
@@ -399,15 +420,24 @@ def solve_center_voting_sse_fixed_radius(
     best_loss = None
     best_votes = 0
 
-    for cy, cx in cand:
-        c = np.array([float(cx), float(cy)], dtype=np.float32)
+    for cy_key, cx_key in cand:
+        c = np.array(
+            [float(cx_key) / vote_scale, float(cy_key) / vote_scale], dtype=np.float32
+        )
         d = np.linalg.norm(pts - c[None, :], axis=1)
+        radial_unit = np.zeros_like(pts)
+        nonzero = d > 1e-9
+        radial_unit[nonzero] = (pts[nonzero] - c[None, :]) / d[nonzero, None]
+        dot = np.sum(radial_unit * grad_unit, axis=1)
+        weights = np.clip(dot - gradient_weight_min_dot, 0.0, None) ** 2
         if ring_inner is not None and ring_outer is not None:
             res = np.minimum(np.abs(d - ring_inner), np.abs(d - ring_outer))
         else:
             res = d - r
-        loss = float(np.sum(res * res))
-        v = int(vote_map[cy, cx])
+        if np.all(weights <= 0.0):
+            continue
+        loss = float(np.sum(weights * (res * res)))
+        v = int(vote_map.get((cy_key, cx_key), 0))
         if best_loss is None or loss < best_loss:
             best_loss = loss
             best_c = c
@@ -576,9 +606,9 @@ def frequency_analysis(
     return dom_freq, dom_amp, fig
 
 
-def build_plot_path(video_path: str, suffix: str) -> str:
-    base = os.path.splitext(os.path.basename(video_path))[0]
-    return os.path.join(os.path.dirname(video_path), f"{base}_{suffix}.png")
+def build_plot_path(output_path: str, index: int, suffix: str) -> str:
+    base = os.path.splitext(os.path.basename(output_path))[0]
+    return os.path.join(os.path.dirname(output_path), f"{base}_{index:02d}_{suffix}.png")
 
 
 def save_figure(fig: plt.Figure, path: str) -> None:
@@ -669,7 +699,7 @@ def main(show_plots: bool = True):
 
     # 4) 屏蔽矩形
     gray0 = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
-    blur0 = cv2.GaussianBlur(gray0, (9, 9), 2.0)
+    blur0 = cv2.GaussianBlur(gray0, GAUSSIAN_BLUR_KERNEL, GAUSSIAN_BLUR_SIGMA)
     edges0 = compute_canny(blur0, CANNY_LOW, CANNY_HIGH)
     ignored_rects = select_ignored_rectangles(first, edges0)
     print(f"[Mask] rectangles={len(ignored_rects)}")
@@ -702,7 +732,7 @@ def main(show_plots: bool = True):
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (9, 9), 2.0)
+        blur = cv2.GaussianBlur(gray, GAUSSIAN_BLUR_KERNEL, GAUSSIAN_BLUR_SIGMA)
         edges = compute_canny(blur, CANNY_LOW, CANNY_HIGH)
         edges = apply_rect_masks(edges, ignored_rects)
 
@@ -743,6 +773,9 @@ def main(show_plots: bool = True):
             roi_box=roi_box,
             vote_threshold=VOTE_THRESHOLD,
             step_limit=grad_step_limit,
+            vote_step_px=VOTE_STEP_PX,
+            vote_radius_tol_px=VOTE_RADIUS_TOL_PX,
+            gradient_weight_min_dot=GRADIENT_WEIGHT_MIN_DOT,
         )
 
         if sol is not None:
@@ -971,9 +1004,9 @@ def main(show_plots: bool = True):
     if show_plots:
         plt.show()
 
-    save_figure(offsets_fig, build_plot_path(video_path, "plot1_offsets"))
-    save_figure(raw_freq_fig, build_plot_path(video_path, "plot2_raw_spectrum"))
-    save_figure(spectra_fig, build_plot_path(video_path, "plot3_spectra"))
+    save_figure(offsets_fig, build_plot_path(out_path, 1, "offsets"))
+    save_figure(raw_freq_fig, build_plot_path(out_path, 2, "raw_spectrum"))
+    save_figure(spectra_fig, build_plot_path(out_path, 3, "spectra"))
     return {
         "video": video_path,
         "output_video": out_path,
